@@ -43,9 +43,8 @@ def _weights_init(m):
         init.kaiming_normal_(m.weight)
 
 # Linear-Exponential Linear Unit
-class lelu(nn.Module):
-    def forward(self, x):
-        return torch.where(x < 0, x * torch.exp(x), x)
+def lelu(x):
+    return torch.where(x < 0, x * torch.exp(x), x)
 
 class LambdaLayer(nn.Module):
     def __init__(self, lambd):
