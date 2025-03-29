@@ -42,6 +42,11 @@ def _weights_init(m):
     if isinstance(m, nn.Linear) or isinstance(m, nn.Conv2d):
         init.kaiming_normal_(m.weight)
 
+# Linear-Exponential Linear Unit
+class lelu(nn.Module):
+    def forward(self, x):
+        return torch.where(x < 0, x * torch.exp(x), x)
+
 class LambdaLayer(nn.Module):
     def __init__(self, lambd):
         super(LambdaLayer, self).__init__()
@@ -76,10 +81,10 @@ class BasicBlock(nn.Module):
                 )
 
     def forward(self, x):
-        out = F.relu(self.bn1(self.conv1(x)))
+        out = lelu(self.bn1(self.conv1(x)))
         out = self.bn2(self.conv2(out))
         out += self.shortcut(x)
-        out = F.relu(out)
+        out = lelu(out)
         return out
 
 
@@ -107,7 +112,7 @@ class ResNet(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        out = F.relu(self.bn1(self.conv1(x)))
+        out = lelu(self.bn1(self.conv1(x)))
         out = self.layer1(out)
         out = self.layer2(out)
         out = self.layer3(out)
