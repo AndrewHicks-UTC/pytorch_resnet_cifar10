@@ -42,9 +42,25 @@ def _weights_init(m):
     if isinstance(m, nn.Linear) or isinstance(m, nn.Conv2d):
         init.kaiming_normal_(m.weight)
 
+class LELUFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input):
+        output = torch.where(input < 0, input * torch.exp(input), input)
+        ctx.save_for_backward(input, output)
+        return output
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        input, output = ctx.saved_tensors
+        return torch.where(
+            input < 0,
+            (output / input + output) * grad_output,
+            grad_output
+        )
+
 # Linear-Exponential Linear Unit
 def lelu(x):
-    return torch.where(x < 0, x * torch.exp(x), x)
+    return LELUFunction.apply(x)
 
 class LambdaLayer(nn.Module):
     def __init__(self, lambd):
