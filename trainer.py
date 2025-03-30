@@ -25,6 +25,8 @@ parser.add_argument('--arch', '-a', metavar='ARCH', default='resnet32',
                     choices=model_names,
                     help='model architecture: ' + ' | '.join(model_names) +
                     ' (default: resnet32)')
+parser.add_argument('--runs', default=1, type=int, metavar='N',
+                    help='number of times to run training (default: 1)')
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
 parser.add_argument('--epochs', default=200, type=int, metavar='N',
@@ -55,6 +57,9 @@ parser.add_argument('--save-dir', dest='save_dir',
 parser.add_argument('--save-every', dest='save_every',
                     help='Saves checkpoints at every specified number of epochs',
                     type=int, default=10)
+parser.add_argument('--activation-fn', dest='activation_fn',
+                    help='Activation function',
+                    type=str, default='relu')
 best_prec1 = 0
 
 
@@ -62,100 +67,118 @@ def main():
     global args, best_prec1
     args = parser.parse_args()
 
+    # Store the best accuracy across all runs
+    all_runs_best_prec1 = []
 
-    # Check the save_dir exists or not
-    if not os.path.exists(args.save_dir):
-        os.makedirs(args.save_dir)
+    for run in range(args.runs):
+        print(f"\nStarting Run {run + 1}/{args.runs}")
+        
+        # Reset best precision for each run
+        best_prec1 = 0
 
-    model = torch.nn.DataParallel(resnet.__dict__[args.arch]())
-    model.cuda()
+        # Check the save_dir exists or not
+        run_save_dir = os.path.join(args.save_dir, f'run_{run + 1}')
+        if not os.path.exists(run_save_dir):
+            os.makedirs(run_save_dir)
 
-    # optionally resume from a checkpoint
-    if args.resume:
-        if os.path.isfile(args.resume):
-            print("=> loading checkpoint '{}'".format(args.resume))
-            checkpoint = torch.load(args.resume)
-            args.start_epoch = checkpoint['epoch']
-            best_prec1 = checkpoint['best_prec1']
-            model.load_state_dict(checkpoint['state_dict'])
-            print("=> loaded checkpoint '{}' (epoch {})"
-                  .format(args.evaluate, checkpoint['epoch']))
-        else:
-            print("=> no checkpoint found at '{}'".format(args.resume))
+        model = torch.nn.DataParallel(resnet.__dict__[args.arch](args.activation_fn))
+        model.cuda()
 
-    cudnn.benchmark = True
+        # optionally resume from a checkpoint
+        if args.resume:
+            if os.path.isfile(args.resume):
+                print("=> loading checkpoint '{}'".format(args.resume))
+                checkpoint = torch.load(args.resume)
+                args.start_epoch = checkpoint['epoch']
+                best_prec1 = checkpoint['best_prec1']
+                model.load_state_dict(checkpoint['state_dict'])
+                print("=> loaded checkpoint '{}' (epoch {})"
+                      .format(args.evaluate, checkpoint['epoch']))
+            else:
+                print("=> no checkpoint found at '{}'".format(args.resume))
 
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225])
+        cudnn.benchmark = True
 
-    train_loader = torch.utils.data.DataLoader(
-        datasets.CIFAR10(root='./data', train=True, transform=transforms.Compose([
-            transforms.RandomHorizontalFlip(),
-            transforms.RandomCrop(32, 4),
-            transforms.ToTensor(),
-            normalize,
-        ]), download=True),
-        batch_size=args.batch_size, shuffle=True,
-        num_workers=args.workers, pin_memory=True)
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                         std=[0.229, 0.224, 0.225])
 
-    val_loader = torch.utils.data.DataLoader(
-        datasets.CIFAR10(root='./data', train=False, transform=transforms.Compose([
-            transforms.ToTensor(),
-            normalize,
-        ])),
-        batch_size=128, shuffle=False,
-        num_workers=args.workers, pin_memory=True)
+        train_loader = torch.utils.data.DataLoader(
+            datasets.CIFAR10(root='./data', train=True, transform=transforms.Compose([
+                transforms.RandomHorizontalFlip(),
+                transforms.RandomCrop(32, 4),
+                transforms.ToTensor(),
+                normalize,
+            ]), download=True),
+            batch_size=args.batch_size, shuffle=True,
+            num_workers=args.workers, pin_memory=True)
 
-    # define loss function (criterion) and optimizer
-    criterion = nn.CrossEntropyLoss().cuda()
+        val_loader = torch.utils.data.DataLoader(
+            datasets.CIFAR10(root='./data', train=False, transform=transforms.Compose([
+                transforms.ToTensor(),
+                normalize,
+            ])),
+            batch_size=128, shuffle=False,
+            num_workers=args.workers, pin_memory=True)
 
-    if args.half:
-        model.half()
-        criterion.half()
+        # define loss function (criterion) and optimizer
+        criterion = nn.CrossEntropyLoss().cuda()
 
-    optimizer = torch.optim.SGD(model.parameters(), args.lr,
-                                momentum=args.momentum,
-                                weight_decay=args.weight_decay)
+        if args.half:
+            model.half()
+            criterion.half()
 
-    lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
-                                                        milestones=[100, 150], last_epoch=args.start_epoch - 1)
+        optimizer = torch.optim.SGD(model.parameters(), args.lr,
+                                    momentum=args.momentum,
+                                    weight_decay=args.weight_decay)
 
-    if args.arch in ['resnet1202', 'resnet110']:
-        # for resnet1202 original paper uses lr=0.01 for first 400 minibatches for warm-up
-        # then switch back. In this setup it will correspond for first epoch.
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = args.lr*0.1
+        lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
+                                                            milestones=[100, 150], last_epoch=args.start_epoch - 1)
+
+        if args.arch in ['resnet1202', 'resnet110']:
+            # for resnet1202 original paper uses lr=0.01 for first 400 minibatches for warm-up
+            # then switch back. In this setup it will correspond for first epoch.
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = args.lr*0.1
 
 
-    if args.evaluate:
-        validate(val_loader, model, criterion)
-        return
+        if args.evaluate:
+            validate(val_loader, model, criterion)
+            return
 
-    for epoch in range(args.start_epoch, args.epochs):
+        for epoch in range(args.start_epoch, args.epochs):
+            # train for one epoch
+            print('current lr {:.5e}'.format(optimizer.param_groups[0]['lr']))
+            train(train_loader, model, criterion, optimizer, epoch)
+            lr_scheduler.step()
 
-        # train for one epoch
-        print('current lr {:.5e}'.format(optimizer.param_groups[0]['lr']))
-        train(train_loader, model, criterion, optimizer, epoch)
-        lr_scheduler.step()
+            # evaluate on validation set
+            prec1 = validate(val_loader, model, criterion)
 
-        # evaluate on validation set
-        prec1 = validate(val_loader, model, criterion)
+            # remember best prec@1 and save checkpoint
+            is_best = prec1 > best_prec1
+            best_prec1 = max(prec1, best_prec1)
 
-        # remember best prec@1 and save checkpoint
-        is_best = prec1 > best_prec1
-        best_prec1 = max(prec1, best_prec1)
+            if epoch > 0 and epoch % args.save_every == 0:
+                save_checkpoint({
+                    'epoch': epoch + 1,
+                    'state_dict': model.state_dict(),
+                    'best_prec1': best_prec1,
+                }, is_best, filename=os.path.join(run_save_dir, 'checkpoint.th'))
 
-        if epoch > 0 and epoch % args.save_every == 0:
             save_checkpoint({
-                'epoch': epoch + 1,
                 'state_dict': model.state_dict(),
                 'best_prec1': best_prec1,
-            }, is_best, filename=os.path.join(args.save_dir, 'checkpoint.th'))
+            }, is_best, filename=os.path.join(run_save_dir, 'model.th'))
 
-        save_checkpoint({
-            'state_dict': model.state_dict(),
-            'best_prec1': best_prec1,
-        }, is_best, filename=os.path.join(args.save_dir, 'model.th'))
+        all_runs_best_prec1.append(best_prec1)
+        print(f"\nRun {run + 1} completed. Best precision@1: {best_prec1:.3f}")
+
+    # Print summary statistics
+    avg_prec1 = sum(all_runs_best_prec1) / len(all_runs_best_prec1)
+    std_prec1 = (sum((x - avg_prec1) ** 2 for x in all_runs_best_prec1) / len(all_runs_best_prec1)) ** 0.5
+    print(f"\nTraining completed for all {args.runs} runs")
+    print(f"Average best precision@1: {avg_prec1:.3f} ± {std_prec1:.3f}")
+    print(f"Best precision@1 across runs: {max(all_runs_best_prec1):.3f}")
 
 
 def train(train_loader, model, criterion, optimizer, epoch):
