@@ -127,7 +127,7 @@ def main():
 
         optimizer = torch.optim.AdamW(model.parameters(), args.lr, weight_decay=args.weight_decay)
 
-        lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, last_epoch=args.start_epoch - 1)
+        lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=50, T_mult=2, last_epoch=args.start_epoch - 1)
 
 
         if args.evaluate:
