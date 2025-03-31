@@ -35,10 +35,8 @@ parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
 parser.add_argument('-b', '--batch-size', default=128, type=int,
                     metavar='N', help='mini-batch size (default: 128)')
-parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
+parser.add_argument('--lr', '--learning-rate', default=1e-3, type=float,
                     metavar='LR', help='initial learning rate')
-parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
-                    help='momentum')
 parser.add_argument('--weight-decay', '--wd', default=1e-4, type=float,
                     metavar='W', help='weight decay (default: 1e-4)')
 parser.add_argument('--print-freq', '-p', default=50, type=int,
@@ -127,18 +125,9 @@ def main():
             model.half()
             criterion.half()
 
-        optimizer = torch.optim.SGD(model.parameters(), args.lr,
-                                    momentum=args.momentum,
-                                    weight_decay=args.weight_decay)
+        optimizer = torch.optim.AdamW(model.parameters(), args.lr, weight_decay=args.weight_decay)
 
-        lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
-                                                            milestones=[100, 150], last_epoch=args.start_epoch - 1)
-
-        if args.arch in ['resnet1202', 'resnet110']:
-            # for resnet1202 original paper uses lr=0.01 for first 400 minibatches for warm-up
-            # then switch back. In this setup it will correspond for first epoch.
-            for param_group in optimizer.param_groups:
-                param_group['lr'] = args.lr*0.1
+        lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, last_epoch=args.start_epoch - 1)
 
 
         if args.evaluate:
